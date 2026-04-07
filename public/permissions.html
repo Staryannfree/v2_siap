@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autorizar Microfone - SIAP</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f8fafc;
+            color: #1e293b;
+            text-align: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 24px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            border: 1px solid #e2e8f0;
+        }
+        h1 { font-size: 24px; margin-bottom: 16px; color: #b45309; }
+        p { font-size: 16px; line-height: 1.5; color: #64748b; margin-bottom: 24px; }
+        .button {
+            background-color: #d97706;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .button:hover { background-color: #b45309; }
+        .status { margin-top: 20px; font-weight: bold; }
+        .success { color: #059669; }
+        .error { color: #dc2626; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Autorizar Microfone</h1>
+        <p>Para usar o comando de voz no SIAP, precisamos da sua permissão. Clique no botão abaixo e selecione <strong>"Permitir"</strong> quando o navegador perguntar.</p>
+        <button id="requestBtn" class="button">Autorizar Agora</button>
+        <div id="status" class="status"></div>
+    </div>
+
+    <script src="permissions.js"></script>
+</body>
+</html>

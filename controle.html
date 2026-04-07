@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle Remoto SIAP</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 h-screen flex flex-col items-center justify-center p-6 font-sans">
+
+    <div class="bg-slate-800 p-8 rounded-3xl shadow-2xl w-full max-w-sm flex flex-col items-center border border-slate-700">
+        <h1 class="text-white text-2xl font-bold mb-2">📱 SIAP Mobile</h1>
+        <p id="status" class="text-slate-400 mb-8 text-sm font-medium">⏳ Conectando à nuvem...</p>
+
+        <button id="btnFalta" class="bg-gradient-to-r from-indigo-500 to-violet-600 active:scale-95 text-white font-bold py-5 px-10 rounded-2xl shadow-[0_10px_20px_rgba(79,70,229,0.3)] text-xl w-full transition-all">
+            Falta no Aluno 5
+        </button>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://qkocdvnkrqjraqsgdnwh.supabase.co/';
+        // Corrigido: Adicionadas aspas simples ao redor da chave
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFrb2Nkdm5rcnFqcmFxc2dkbndoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ3MTQ2ODQsImV4cCI6MjA5MDI5MDY4NH0.8AEvVtw_942IvP5WzjuPA7O-AVx0obNwN0Z_0XvkUOU';
+
+        // Corrigido: Definindo o nome da sala antes de conectar (Verifique se é o mesmo da extensão!)
+        const roomId = 'sala-teste-turbo-123'; 
+
+        const clienteSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const statusEl = document.getElementById('status');
+
+        // Corrigido: Removida a duplicação e usando o cliente correto
+        const channel = clienteSupabase.channel(roomId);
+        
+        channel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                statusEl.innerText = '🟢 Conectado e pronto!';
+                statusEl.classList.replace('text-slate-400', 'text-emerald-400');
+            }
+        });
+
+        // Quando o professor clica no botão do celular
+        document.getElementById('btnFalta').addEventListener('click', () => {
+            statusEl.innerText = '📡 Enviando comando...';
+            
+            // "Grita" o comando na sala
+            channel.send({
+                type: 'broadcast',
+                event: 'COMANDO_REMOTO',
+                payload: { acao: 'MARCAR_FALTA', numeros: [5] } // Mandando dar falta no número 5
+            }).then(() => {
+                setTimeout(() => statusEl.innerText = '🟢 Comando enviado!', 500);
+            });
+        });
+    </script>
+</body>
+</html>

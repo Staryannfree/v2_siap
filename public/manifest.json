@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "SIAP Frequência - Lançador de Faltas",
+  "description": "Lê fotos de pautas de frequência escolar e lança as faltas automaticamente no SIAP.",
+  "version": "1.3.0",
+  "action": {
+    "default_popup": "index.html"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "audioCapture",
+    "camera"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "host_permissions": [
+    "*://siap.educacao.go.gov.br/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://siap.educacao.go.gov.br/*"],
+      "js": ["content.js"]
+    }
+  ]
+}
