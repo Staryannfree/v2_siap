@@ -329,29 +329,35 @@ function isSiapTreePostBackQueueItem(item) {
 }
 
 function processHeartbeatQueue() {
-  if (isProcessing) return; // Se está no meio de um clique/reload, aguarda.
-
-  // Aguarda o PageRequestManager (UpdatePanel ASP.NET) estar pronto.
-  // Evita clicks disparados antes do Sys/PRM inicializar numa página recém-carregada
-  // via safeDoPostBack (form.submit completo), onde o Executar seria ignorado silenciosamente.
-  if (!siapPrmReady) {
-    console.log('SIAP: [Fila] Aguardando PageRequestManager inicializar...');
-    return;
-  }
-
-  if (document.body.getAttribute('data-siap-ajax') === 'true') {
-    // Servidor ASP.NET ainda processando AJAX/UpdatePanel. Não atropele!
-    return;
-  }
-
   const queueStr = localStorage.getItem(QUEUE_KEY);
   if (!queueStr || queueStr === '[]') {
     totalItemsInQueue = 0;
-    return; // Fila vazia
+    return;
   }
-  
+
+  console.log('[DEBUG FILA] Tick: Fila detectada. ReadyState:', document.readyState);
+  console.log('[DEBUG FILA] Prontidão: isProcessing=', isProcessing, '| siapPrmReady=', siapPrmReady);
+
+  if (isProcessing) {
+    console.log('[DEBUG FILA] Aguardando timer do clique anterior (isProcessing=true)');
+    return;
+  }
+
+  if (!siapPrmReady) {
+    console.warn('[DEBUG FILA] Bloqueado: Aguardando estabilização PRM/Contexto...');
+    return;
+  }
+
+  const isAjaxLoading = document.body.getAttribute('data-siap-ajax') === 'true';
+  if (isAjaxLoading) {
+    console.warn('[DEBUG FILA] Bloqueado: SIAP sinalizou AJAX em andamento (data-siap-ajax=true)');
+    return;
+  }
+
   let queue = [];
-  try { queue = JSON.parse(queueStr); } catch(e) {
+  try {
+    queue = JSON.parse(queueStr);
+  } catch (e) {
     console.error("SIAP [Queue Error]:", e);
     localStorage.removeItem(QUEUE_KEY);
     totalItemsInQueue = 0;
@@ -1054,7 +1060,10 @@ function trySiapAvancarAposSalvarFromConteudoInit() {
     );
     const aulaFoiExecutada = btnsRemover.length > 0;
 
-    console.log('SIAP: [Avançar pós-salvar] Botões Remover detectados:', btnsRemover.length, '| aulaFoiExecutada:', aulaFoiExecutada);
+    console.log('[DEBUG AVANCO] Botões Remover detectados:', btnsRemover.length, '| aulaFoiExecutada:', aulaFoiExecutada);
+    if (btnsRemover.length > 0) {
+      console.log('[DEBUG AVANCO] IDs dos botões Remover:', Array.from(btnsRemover).map(b => b.id));
+    }
 
     if (!aulaFoiExecutada) {
       // Nenhum item foi efetivamente executado — limpa a flag e não avança.
@@ -1326,14 +1335,16 @@ function siapAulaJaPreenchida() {
     return true;
   }
 
-  // --- Passo 3 (informativo): conta [Executar] apenas para log — NÃO é critério de decisão ---
-  // O SIAP exibe dezenas de [Executar] fixos (árvore de materiais, conteúdos planejados do ano),
-  // tornando esse contador sempre alto e inútil como critério.
+  // --- Passo 3 (informativo): conta [Executar] apenas para log ---
   const btnsExecutar = document.querySelectorAll('input[type="submit"][value="Executar"]:not([disabled])');
-  console.log('[SIAP GEMINADA DEBUG] Passo 3 (info) — Botões Executar na página (ignorado como critério):', btnsExecutar.length);
+  console.log('[DEBUG DETECCAO] Passo 3 (info) — Botões Executar totais:', btnsExecutar.length);
+  if (btnsExecutar.length > 0) {
+    const listE = Array.from(btnsExecutar).slice(0, 3).map(b => b.id);
+    console.log('[DEBUG DETECCAO] Exemplos de IDs Executar:', listE);
+  }
 
-  console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula VAZIA (sem Remover, sem conteúdo livre)');
-  console.log('[SIAP GEMINADA DEBUG] ===== siapaJaPreenchida END =====');
+  console.log('[DEBUG DETECCAO] → RESULTADO FINAL: aula VAZIA (sem Remover, sem conteúdo livre)');
+  console.log('[DEBUG DETECCAO] ===== siapAulaJaPreenchida END =====');
   return false;
 }
 
@@ -1357,16 +1368,16 @@ function siapAvancarParaProximaAula(dd) {
     'ctl00$ctl00$cphFuncionalidade$cphCampos$LstAulasDiaSelecionado';
   const nomeAula = dd.options[proximoIdx].text || String(proximoIdx + 1);
   console.log('[SIAP GEMINADA DEBUG] Avancando para proxima aula: idxAntigo=' + (dd.selectedIndex - 1) + ' → idxNovo=' + proximoIdx + ' → aula="' + nomeAula + '"');
-  console.log('[SIAP GEMINADA DEBUG] Postback sendo disparado para:', target);
-  // Notifica o painel React que vamos trocar de aula
+  console.log('[DEBUG AVANCO] Notificando painel sobre mudança de aula...');
   try {
     chrome.runtime.sendMessage({
       action: 'SIAP_AULA_AVANCADA',
       payload: { aulaIdx: proximoIdx, nomeAula },
     });
   } catch (e) { /* ignore */ }
+  
   setTimeout(() => {
-    console.log('[SIAP GEMINADA DEBUG] safeDoPostBack executado (apos 400ms)');
+    console.log('[DEBUG AVANCO] safeDoPostBack disparando AGORA para:', target);
     safeDoPostBack(target, '');
   }, 400);
   return true;
@@ -1380,6 +1391,9 @@ function siapAvancarParaProximaAula(dd) {
  */
 function initConteudoPage() {
   console.log("SIAP: Iniciando módulo de Lançamento de Conteúdo (v2 Smart Geminada).");
+  console.log('[DEBUG INIT] SIAP_AVANCAR_APOS_SALVAR_KEY:', sessionStorage.getItem(SIAP_AVANCAR_APOS_SALVAR_KEY));
+  console.log('[DEBUG INIT] URL:', window.location.href);
+  console.log('[DEBUG INIT] PageReadyState:', document.readyState);
 
   /**
    * Aguarda o DOM do ASP.NET terminar de popular (UpdatePanel pode demorar).
