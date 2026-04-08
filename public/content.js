@@ -70,6 +70,14 @@ const QUEUE_KEY = 'siap_click_queue';
 let isProcessing = false; 
 let totalItemsInQueue = 0;
 
+/**
+ * Flag de prontidão do PageRequestManager (UpdatePanel do ASP.NET).
+ * Evita que a fila de cliques dispare ANTES do Sys/PRM estar inicializado
+ * na página recém-carregada via safeDoPostBack (form.submit completo).
+ * Liberado por hookAjaxWatcher ao encontrar o PRM, ou pelo fallback de 5s.
+ */
+let siapPrmReady = false;
+
 // Intercepta requisições AJAX do ASP.NET via polling no próprio content-script.
 // NÃO usa createElement('script') — imune à CSP do SIAP.
 (function hookAjaxWatcher() {
@@ -88,9 +96,24 @@ let totalItemsInQueue = 0;
         prm.add_endRequest(function() {
           document.body && document.body.setAttribute('data-siap-ajax', 'false');
         });
-      } catch(e) { /* Sys presente mas sem PageRequestManager ativo */ }
+        siapPrmReady = true; // PRM encontrado e hooks registrados — fila liberada.
+        console.log('SIAP: [PRM] PageRequestManager pronto. Fila de cliques liberada.');
+      } catch(e) {
+        // Sys presente mas sem PRM ativo (página sem UpdatePanel) — libera mesmo assim.
+        siapPrmReady = true;
+        console.warn('SIAP: [PRM] PRM indisponível (sem UpdatePanel?) — fila liberada.');
+      }
     }
-    if (_ajaxPollAttempts >= 100) clearInterval(_ajaxPoller); // 20s timeout
+    if (_ajaxPollAttempts >= 5) {
+      // NOTA: Content scripts rodam em Isolated World e NÃO enxergam window.Sys
+      // (variável JS da página ASP.NET). O PRM nunca será detectável via este método.
+      // Após 1s (~5 polls × 200ms), libera a fila imediatamente para não atrasar.
+      clearInterval(_ajaxPoller);
+      if (!siapPrmReady) {
+        siapPrmReady = true;
+        console.log('SIAP: [PRM] Isolated World — window.Sys inacessível. Fila liberada após 1s.');
+      }
+    }
   }, 200);
 })();
 
@@ -308,6 +331,14 @@ function isSiapTreePostBackQueueItem(item) {
 function processHeartbeatQueue() {
   if (isProcessing) return; // Se está no meio de um clique/reload, aguarda.
 
+  // Aguarda o PageRequestManager (UpdatePanel ASP.NET) estar pronto.
+  // Evita clicks disparados antes do Sys/PRM inicializar numa página recém-carregada
+  // via safeDoPostBack (form.submit completo), onde o Executar seria ignorado silenciosamente.
+  if (!siapPrmReady) {
+    console.log('SIAP: [Fila] Aguardando PageRequestManager inicializar...');
+    return;
+  }
+
   if (document.body.getAttribute('data-siap-ajax') === 'true') {
     // Servidor ASP.NET ainda processando AJAX/UpdatePanel. Não atropele!
     return;
@@ -419,7 +450,7 @@ function processHeartbeatQueue() {
 
     setTimeout(() => {
       isProcessing = false;
-    }, 2500);
+    }, 4500); // 4.5s: dá tempo ao safeDoPostBack/UpdatePanel do SIAP completar
     return;
   }
 
@@ -452,7 +483,7 @@ function processHeartbeatQueue() {
 
     setTimeout(() => {
       isProcessing = false;
-    }, 2500);
+    }, 4500); // 4.5s: dá tempo ao UpdatePanel/AJAX do SIAP processar o Executar
 
   } else {
     // Botão não encontrado; aguarda próximo tick (postback / DOM).
@@ -1001,8 +1032,12 @@ function clickPendingCalendarCell(first) {
 }
 
 /**
- * Navegação guiada pós-salvamento (mobile): avança para o próximo dia azul ou avisa inbox zero.
- * Só roda com fila de cliques vazia — evita interferir na 2ª aula geminada.
+ * Navegação guiada pós-salvamento (mobile):
+ * Hierarquia de decisão:
+ *   1. Tem botão [Remover] na página? = algo foi executado nesta aula pelo mobile.
+ *      1a. Tem próxima aula no dropdown? → avança para a próxima AULA (geminada).
+ *      1b. Não tem próxima aula?          → avança para o próximo DIA pendente.
+ *   2. Sem [Remover] → não faz nada (segurança: nada foi realmente executado).
  */
 function trySiapAvancarAposSalvarFromConteudoInit() {
   try {
@@ -1011,13 +1046,45 @@ function trySiapAvancarAposSalvarFromConteudoInit() {
       console.log('SIAP: [Avançar pós-salvar] Fila de cliques ainda pendente — aguardando.');
       return;
     }
+
+    // Sinal confiável de execução: presença de botão [Remover] na página.
+    const btnsRemover = document.querySelectorAll(
+      'input[type="submit"][value="Remover"]:not([disabled]),'
+      + 'input[type="submit"][value="Remover "]:not([disabled])'
+    );
+    const aulaFoiExecutada = btnsRemover.length > 0;
+
+    console.log('SIAP: [Avançar pós-salvar] Botões Remover detectados:', btnsRemover.length, '| aulaFoiExecutada:', aulaFoiExecutada);
+
+    if (!aulaFoiExecutada) {
+      // Nenhum item foi efetivamente executado — limpa a flag e não avança.
+      console.log('SIAP: [Avançar pós-salvar] Nenhum [Remover] detectado — possivelmente só abriu a página. Aguardando.');
+      sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
+      return;
+    }
+
+    // Verifica se há PRÓXIMA AULA no dropdown (caso geminada).
+    const dd = document.getElementById('cphFuncionalidade_cphCampos_LstAulasDiaSelecionado');
+    const temProximaAula = dd && dd.options && (dd.selectedIndex + 1) < dd.options.length;
+
+    if (temProximaAula) {
+      // GEMINADA: avança para a próxima aula do mesmo dia.
+      const nomeProxima = dd.options[dd.selectedIndex + 1].text;
+      console.log('SIAP: [Avançar pós-salvar] GEMINADA detectada — avançando para:', nomeProxima);
+      sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
+      siapAvancarParaProximaAula(dd);
+      return;
+    }
+
+    // AULA ÚNICA (ou última aula do dia): avança para o próximo dia pendente.
     const first = getFirstPendingDayEntry();
     if (first) {
-      console.log('SIAP: [Avançar pós-salvar] Abrindo próximo dia pendente:', first);
+      console.log('SIAP: [Avançar pós-salvar] Aula única/última — abrindo próximo dia pendente:', first);
       sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
       clickPendingCalendarCell(first);
       return;
     }
+
     console.log('SIAP: [Avançar pós-salvar] Nenhum dia pendente (inbox zero).');
     sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
     try {
@@ -1218,27 +1285,33 @@ function scrapeAulasDiaDropdown() {
  * Retorna true → aula preenchida; false → aula vazia/pronta para injeção.
  */
 function siapAulaJaPreenchida() {
-  // --- Passo 1: botões "Executar" ainda disponíveis? ---
-  // Obs: seletor amplo — cobre qualquer UpdatePanel que o SIAP use.
-  const btnsExecutar = document.querySelectorAll(
-    'input[type="submit"][value="Executar"]:not([disabled])'
-  );
-
   const ddAula = document.getElementById('cphFuncionalidade_cphCampos_LstAulasDiaSelecionado');
   const idxAula = ddAula && ddAula.selectedIndex !== -1 ? ddAula.selectedIndex : 'N/A';
   const txtAula = ddAula && ddAula.options && ddAula.options[idxAula] ? ddAula.options[idxAula].text : 'N/A';
 
   console.log('[SIAP GEMINADA DEBUG] ===== siapaJaPreenchida START =====');
   console.log('[SIAP GEMINADA DEBUG] Aula atual dropdown: idx=' + idxAula + ' | texto="' + txtAula + '" | total=' + (ddAula ? ddAula.options.length : 0));
-  console.log('[SIAP GEMINADA DEBUG] Passo 1 — Botões Executar disponíveis:', btnsExecutar.length);
 
-  if (btnsExecutar.length > 0) {
-    console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula VAZIA (ainda há ' + btnsExecutar.length + ' botão(es) "Executar")');
+  // --- Passo 1 (NOVO): botões "Remover" — sinal CONFIÁVEL de execução. ---
+  // O SIAP mantém [Executar] na lista de planejados/materiais SEMPRE visíveis,
+  // independentemente do que já foi executado. O [Remover] só aparece nas seções
+  // "Conteúdo Ministrado" e "Material de Apoio Utilizado", que só existem
+  // quando ao menos um item foi efetivamente executado na aula atual.
+  const btnsRemover = document.querySelectorAll(
+    'input[type="submit"][value="Remover"]:not([disabled]),'
+    + 'input[type="submit"][value="Remover "]:not([disabled])'
+  );
+
+  console.log('[SIAP GEMINADA DEBUG] Passo 1 — Botões Remover (indicador primário):', btnsRemover.length,
+    '(IDs:', Array.from(btnsRemover).slice(0, 5).map(b => b.id).join(', ') || 'nenhum', ')');
+
+  if (btnsRemover.length > 0) {
+    console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula PREENCHIDA (Remover=' + btnsRemover.length + ')');
     console.log('[SIAP GEMINADA DEBUG] ===== siapaJaPreenchida END =====');
-    return false;
+    return true;
   }
 
-  // --- Passo 2: campo de conteúdo livre ---
+  // --- Passo 2: campo de conteúdo livre preenchido ---
   const txtLivre =
     document.getElementById('cphFuncionalidade_cphCampos_TxtConteudoLivreExecutado') ||
     document.querySelector('textarea[id*="ConteudoLivre"]') ||
@@ -1247,21 +1320,19 @@ function siapAulaJaPreenchida() {
 
   console.log('[SIAP GEMINADA DEBUG] Passo 2 — Textarea livre:', !!txtLivre, '| valorLength=' + valorLivre.length);
 
-  // --- Passo 3: botões "Remover" (surgem após execução) ---
-  const btnsRemover = document.querySelectorAll(
-    'input[type="submit"][value="Remover"]:not([disabled]),'
-    + 'input[type="submit"][value="Remover "]:not([disabled])'
-  );
-
-  console.log('[SIAP GEMINADA DEBUG] Passo 3 — Botões Remover:', btnsRemover.length, '(IDs:', Array.from(btnsRemover).slice(0,5).map(b=>b.id).join(', ') || 'nenhum' + ')');
-
-  if (btnsRemover.length > 0 || valorLivre.length > 0) {
-    console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula PREENCHIDA (Remover=' + btnsRemover.length + ', livreLen=' + valorLivre.length + ')');
+  if (valorLivre.length > 0) {
+    console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula PREENCHIDA (conteúdo livre presente)');
     console.log('[SIAP GEMINADA DEBUG] ===== siapaJaPreenchida END =====');
     return true;
   }
 
-  console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula VAZIA (zero indicadores: sem Executar, sem Remover, sem livre)');
+  // --- Passo 3 (informativo): conta [Executar] apenas para log — NÃO é critério de decisão ---
+  // O SIAP exibe dezenas de [Executar] fixos (árvore de materiais, conteúdos planejados do ano),
+  // tornando esse contador sempre alto e inútil como critério.
+  const btnsExecutar = document.querySelectorAll('input[type="submit"][value="Executar"]:not([disabled])');
+  console.log('[SIAP GEMINADA DEBUG] Passo 3 (info) — Botões Executar na página (ignorado como critério):', btnsExecutar.length);
+
+  console.log('[SIAP GEMINADA DEBUG] → RESULTADO: aula VAZIA (sem Remover, sem conteúdo livre)');
   console.log('[SIAP GEMINADA DEBUG] ===== siapaJaPreenchida END =====');
   return false;
 }
@@ -1824,6 +1895,9 @@ function initConteudoPagePostGeminada() {
     siapScheduleUpdatePageStatsFromDom({ immediate: false });
   });
   observer.observe(siapObserveRootForStats(), { childList: true, subtree: true });
+
+  // Auto-avanço pós-salvamento (vinculado ao mobile)
+  trySiapAvancarAposSalvarFromConteudoInit();
 }
 
 // --- DraftGuardian: Auto-Save & Restoration ---
@@ -2409,6 +2483,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "REQUEST_PAGE_STATS") {
     sendResponse({ stats: getMissingClassesStats() });
   } else if (message.action === "ADD_TO_QUEUE" && message.payload && Array.isArray(message.payload)) {
+    // Detecta se o salvamento foi solicitado para autorizar o auto-avanço pós-refresh
+    const hasSaveBtn = message.payload.some(item => 
+      item === 'cphFuncionalidade_btnAlterar' || 
+      (typeof item === 'string' && (item.includes('btnAlterar') || item.includes('btnSalvar')))
+    );
+    if (hasSaveBtn) {
+      console.log("SIAP: [Avançar pós-salvar] Salvamento detectado na fila. Auto-avanço pré-autorizado.");
+      sessionStorage.setItem(SIAP_AVANCAR_APOS_SALVAR_KEY, 'true');
+    }
+
     localStorage.setItem(QUEUE_KEY, JSON.stringify(message.payload));
     if (message.treePostBackTarget) {
       localStorage.setItem('siap_tree_postback_target', message.treePostBackTarget);
