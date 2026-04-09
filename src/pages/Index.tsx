@@ -468,6 +468,8 @@ type DadosTurmaBroadcastPayload = {
   diaOficialSiap?: string | null;
   /** Valor do dropdown de aulas do dia no SIAP (geminadas); string vazia quando indisponível. */
   aulaAtual?: string;
+  /** Rótulo do mês visível no calendário (ex: Abril 2026). */
+  calendarMonthLabel?: string;
 };
 
 /** Extrai diaOficialSiap de pageStats (campo injetado pelo content.js).
@@ -2261,6 +2263,7 @@ const Index = () => {
                       0,
                     )
                   : 0,
+                calendarMonthLabel: pageStats?.calendarMonthLabel || "",
               },
             });
           })
@@ -2325,7 +2328,7 @@ const Index = () => {
     const diaOficialSiap = getDiaOficialSiapFromStats(pageStats);
     if (!diaOficialSiap) return;
 
-    const dedupe = `freq|${diaOficialSiap}|${String(pageStats.turma ?? "")}|${String(pageStats.disciplina ?? "")}|aula:${getAulaAtualFromStats(pageStats)}`;
+    const dedupe = `freq|${diaOficialSiap}|${String(pageStats.turma ?? "")}|${String(pageStats.disciplina ?? "")}|aula:${getAulaAtualFromStats(pageStats)}|month:${pageStats.calendarMonthLabel ?? ""}`;
     if (frequenciaMobileBroadcastSigRef.current === dedupe) return;
     frequenciaMobileBroadcastSigRef.current = dedupe;
 
@@ -2353,6 +2356,7 @@ const Index = () => {
       turmasDisponiveis,
       diaOficialSiap,
       aulaAtual: getAulaAtualFromStats(stats),
+      calendarMonthLabel: stats?.calendarMonthLabel || "",
     }).catch(() => {});
   }, [activeTab, pageStats]);
 
@@ -2906,6 +2910,7 @@ const Index = () => {
           turmasDisponiveis,
           diaOficialSiap: getDiaOficialSiapFromStats(stats),
           aulaAtual: getAulaAtualFromStats(stats),
+          calendarMonthLabel: stats?.calendarMonthLabel || "",
         }).then((status) => {
           if (status === "ok") {
             toast.success("📱 Celular conectado! Pode minimizar esta janela e dar a sua aula.", {

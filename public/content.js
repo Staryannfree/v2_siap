@@ -991,11 +991,34 @@ function queueHasPendingClickItems() {
 function getFirstPendingDayEntry() {
   const months = getPendingDays();
   const flat = [];
+  
+  // Referência de "Hoje" (limite máximo para Frequência/Conteúdo)
+  const now = new Date();
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const isPlanning = isSiapPlanningCalendarUrl(window.location.href);
+
   months.forEach(m => {
     (m.days || []).forEach(d => {
-      flat.push(typeof d === 'number' ? { day: d, dataCanonica: null } : d);
+      const entry = typeof d === 'number' ? { day: d, dataCanonica: null } : d;
+      
+      // Se não for planejamento (ou seja, se for Conteúdo ou Frequência),
+      // filtramos para não avançar para o futuro.
+      if (!isPlanning) {
+        let entryDate = null;
+        if (entry.dataCanonica) {
+          const p = entry.dataCanonica.split('/').map(x => parseInt(String(x).trim(), 10));
+          entryDate = new Date(p[0], p[1] - 1, p[2]);
+        } else {
+          entryDate = new Date(m.year, m.month - 1, entry.day);
+        }
+
+        if (entryDate > todayEnd) return;
+      }
+      
+      flat.push(entry);
     });
   });
+
   flat.sort((a, b) => {
     if (a.dataCanonica && b.dataCanonica) {
       const pa = a.dataCanonica.split('/').map(x => parseInt(String(x).trim(), 10));
@@ -1086,8 +1109,40 @@ function trySiapAvancarAposSalvarFromConteudoInit() {
     }
 
     // AULA ÚNICA (ou última aula do dia): avança para o próximo dia pendente.
+    // Lê o dia atualmente aberto na página para não re-selecionar o mesmo dia.
+    const dateInput = document.getElementById('cphFuncionalidade_cphCampos_txtDataSelecionada');
+    const diaAtualSiap = dateInput && dateInput.value ? dateInput.value.trim() : null; // "dd/mm/aaaa"
+
     const first = getFirstPendingDayEntry();
     if (first) {
+      // Verifica se o dia retornado é o mesmo que está aberto — se for, o calendário
+      // ainda não atualizou visualmente (bug de loop). Nesse caso, não fazemos nada.
+      let firstCanonica = first.dataCanonica; // "YYYY/M/D"
+      if (!firstCanonica && diaAtualSiap) {
+        // Tenta construir a canônica a partir do dia e do mês/ano da data atual no SIAP
+        const parts = diaAtualSiap.split('/'); // ["08","04","2026"]
+        if (parts.length === 3) {
+          firstCanonica = `${parts[2]}/${parseInt(parts[1], 10)}/${first.day}`;
+        }
+      }
+      let mesmoDia = false;
+      if (firstCanonica && diaAtualSiap) {
+        const parts = diaAtualSiap.split('/');
+        if (parts.length === 3) {
+          const canonAtual = `${parts[2]}/${parseInt(parts[1], 10)}/${parseInt(parts[0], 10)}`;
+          const canonFirst = firstCanonica.split('/').map(x => parseInt(String(x).trim(), 10)).join('/');
+          const canonAtualNorm = canonAtual.split('/').map(x => parseInt(String(x).trim(), 10)).join('/');
+          mesmoDia = canonFirst === canonAtualNorm;
+        }
+      }
+
+      if (mesmoDia) {
+        console.log('SIAP: [Avançar pós-salvar] Próximo pendente é o mesmo dia atual (' + diaAtualSiap + ') — calendário ainda não atualizou. Nenhum dia pendente (inbox zero).');
+        sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
+        try { chrome.runtime.sendMessage({ action: 'INBOX_ZERO' }); } catch (e) { /* ignore */ }
+        return;
+      }
+
       console.log('SIAP: [Avançar pós-salvar] Aula única/última — abrindo próximo dia pendente:', first);
       sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
       clickPendingCalendarCell(first);
@@ -1453,6 +1508,7 @@ function scrapeDdlEixo() {
  *   3) Derivar de diaOficialSiap (dd/mm/aaaa)
  */
 function scrapeCalendarVisibleMonthLabel(diaOficialSiapFallback) {
+  console.log('SIAP: Iniciando captura do rótulo do mês...');
   var mNames = ['', 'JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO',
     'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
 
@@ -1467,8 +1523,11 @@ function scrapeCalendarVisibleMonthLabel(diaOficialSiapFallback) {
   // Estratégia 1: atributo mes= na tabela do calendário (mais confiável)
   if (calTable) {
     var mesAttr = parseInt(calTable.getAttribute('mes'), 10);
+    console.log('SIAP: mesAttr na tabela:', mesAttr);
     if (mesAttr >= 1 && mesAttr <= 12) {
-      return mNames[mesAttr] + ' ' + anoFallback;
+      const label = mNames[mesAttr] + ' ' + anoFallback;
+      console.log('SIAP: Rótulo capturado (Estratégia 1):', label);
+      return label;
     }
   }
 
@@ -1479,8 +1538,10 @@ function scrapeCalendarVisibleMonthLabel(diaOficialSiapFallback) {
     document.querySelector('.cabecalho-mes-calendario select');
   if (selMes && selMes.tagName === 'SELECT' && selMes.selectedIndex >= 0) {
     var optText = (selMes.options[selMes.selectedIndex].text || '').trim().toUpperCase();
+    console.log('SIAP: Texto do select de mês:', optText);
     if (optText) {
       if (!/20\d{2}/.test(optText)) optText += ' ' + anoFallback;
+      console.log('SIAP: Rótulo capturado (Estratégia 2):', optText);
       return optText;
     }
   }
@@ -1569,9 +1630,13 @@ function getMissingClassesStats() {
       const descSpan = row.querySelector('.descricao-item-grade');
       const submitBtn = row.querySelector('input[type="submit"]');
       if (descSpan && submitBtn) {
+        const textoMaterial = descSpan.innerText.trim();
+        // ID estável baseado no texto (normalizado) para persistência
+        const stableId = 'mat_' + textoMaterial.toLowerCase().replace(/[^a-z0-9]/g, '');
+        
         materiaisList.push({
-          id: `mat_${index}`,
-          texto: descSpan.innerText.trim(),
+          id: stableId,
+          texto: textoMaterial,
           btnId: submitBtn.id
         });
       }
@@ -1598,6 +1663,7 @@ function getMissingClassesStats() {
     materiaisList,
     aulasDisponiveis,
     aulaAtual,
+    selecionados: { materiais: [] }, // Padrão: desmarcado (conforme pedido)
     planejamentoOptions,
     planejamentoTreeEventTarget,
     unidadesTematicas,
@@ -1606,6 +1672,24 @@ function getMissingClassesStats() {
               isSiapPlanningCalendarUrl(window.location.href) ? 'planejamento' :
               window.location.href.toLowerCase().includes('frequenciaprofessorturmaedicao.aspx') || window.location.href.toLowerCase().includes('frequenciaalunoedicao.aspx') ? 'frequencia' : 'frequencia'
   };
+
+  // Se estivermos na página de conteúdo e houver turma, tenta injetar presets de materiais (cache)
+  if (stats.pageType === 'conteudo' && stats.turma && stats.materiaisList.length > 0) {
+    const cacheKey = `siap_preset_mat_${stats.turma}`;
+    const cachedMat = localStorage.getItem(cacheKey);
+    if (cachedMat) {
+      try {
+        const savedTexts = JSON.parse(cachedMat); // Lista de textos "normais"
+        if (Array.isArray(savedTexts)) {
+          const matchingIds = stats.materiaisList
+            .filter(m => savedTexts.includes(m.texto.trim()))
+            .map(m => m.id);
+          stats.selecionados.materiais = matchingIds;
+          console.log(`SIAP: [Cache] Injetando ${matchingIds.length} materiais salvos para a turma ${stats.turma}`);
+        }
+      } catch (e) { /* ignore */ }
+    }
+  }
   
   // Return stats if we have basic context (turma/disciplina) or students/days ou opções da árvore Turbo
   if (stats.turma || stats.disciplina || stats.pendingMonths.length > 0 || stats.students.length > 0 || stats.planejamentoOptions.length > 0 || (stats.unidadesTematicas && stats.unidadesTematicas.length > 0)) {
@@ -2511,6 +2595,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.treePostBackTarget) {
       localStorage.setItem('siap_tree_postback_target', message.treePostBackTarget);
     }
+
+    // --- Lógica de Presets de Materiais (Cache) ---
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes("conteudoprogramaticoedicao.aspx")) {
+      const turmaInput = document.getElementById('cphFuncionalidade_cphCampos_txtTurma');
+      const turma = turmaInput ? turmaInput.value.trim() : null;
+      if (turma) {
+        // Mapeia btnIds selecionados de volta para os textos dos materiais
+        const materialTable = document.getElementById('cphFuncionalidade_cphCampos_GrdMaterialApoio');
+        if (materialTable) {
+          const materiaisRows = materialTable.querySelectorAll('tbody tr:not(:first-child)');
+          const selectedMaterialTexts = [];
+          materiaisRows.forEach(row => {
+            const descSpan = row.querySelector('.descricao-item-grade');
+            const submitBtn = row.querySelector('input[type="submit"]');
+            if (descSpan && submitBtn && message.payload.includes(submitBtn.id)) {
+              selectedMaterialTexts.push(descSpan.innerText.trim());
+            }
+          });
+          
+          if (selectedMaterialTexts.length > 0) {
+            localStorage.setItem(`siap_preset_mat_${turma}`, JSON.stringify(selectedMaterialTexts));
+            console.log(`SIAP: [Cache] Salvando ${selectedMaterialTexts.length} presets de materiais para a turma ${turma}`);
+          }
+        }
+      }
+    }
+    // ----------------------------------------------
+
     console.log("SIAP: Nova fila recebida com", message.payload.length, "itens.", message.treePostBackTarget ? '(TreeView)' : '');
     // Garante que o poller pode começar a trabalhar e reseta o contador total
     isProcessing = false;
