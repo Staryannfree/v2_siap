@@ -1,0 +1,71 @@
+
+# 2026-04-10 02:45:45.874592
++Y
+
+# 2026-04-10 02:46:14.954282
++D
+
+# 2026-04-10 02:48:24.760359
++olá
+
+# 2026-04-10 02:56:06.880736
++D
+
+# 2026-04-10 02:56:13.266140
++olá
+
+# 2026-04-10 02:56:53.918228
++Vá para a pasta C:\Users\Adm-Sup\Documents\Github\SIAP ULTIMATE\v2_siap.
++
++Estamos enfrentando um erro fatal de Temporal Dead Zone (TDZ) no build de produção (ReferenceError: Cannot access 'la' before initialization no index.js). O arquivo src/pages/Index.tsx é gigantesco (4500+ linhas) e não temos acesso ao histórico do Git para reverter. Vamos aplicar um 'Fix Forward' definitivo.
++
++O erro começou após alterarmos a lógica que forçava o calendário a ir para Janeiro (SELECT_CALENDAR_DAY). Alguma variável, componente auxiliar (como Card, Badge, etc) ou função ficou fora de ordem no escopo.
++
++Sua Missão Estratégica (Sem Git):
++
++Análise de Escopo Top-Down: Leia o arquivo Index.tsx. Verifique todas as declarações de useRef, useState e componentes UI auxiliares que estão declarados dentro do mesmo arquivo.
++
++A Cura pelo Hoisting: Para evitar TDZ em funções de callback e handlers, converta as declarações de const minhaFuncao = () => {} que estão causando conflito circular para funções nomeadas tradicionais function minhaFuncao() {}, pois elas sofrem hoisting automático do JavaScript.
++
++Ordem de Componentes: Se houver componentes menores (ex: Card, Modal) declarados no final do arquivo ou dentro do componente principal, mova-os para fora e para o topo do arquivo (logo após os imports).
++
++Conserto do Gatilho (Janeiro): Procure o useEffect que dispara o SELECT_CALENDAR_DAY ou a função performSelectCalendarDay automaticamente na montagem. Em vez de apagar código, adicione um return; no início desse bloco condicional para desativar a auto-navegação para Janeiro sem quebrar as variáveis ao redor.
++
++Validação: Rode npm run build. O build deve terminar sem erros. Continue ajustando a ordem das variáveis até o build passar com sucesso de primeira."
+
+# 2026-04-10 02:57:04.654104
++D
+
+# 2026-04-10 02:59:36.484524
++/add src/pages/Index.tsx
+
+# 2026-04-10 02:59:47.968052
++Vá para a pasta C:\Users\Adm-Sup\Documents\Github\SIAP ULTIMATE\v2_siap.
++
++Estamos enfrentando um erro fatal de Temporal Dead Zone (TDZ) no build de produção (ReferenceError: Cannot access 'la' before initialization no index.js). O arquivo src/pages/Index.tsx é gigantesco (4500+ linhas) e não temos acesso ao histórico do Git para reverter. Vamos aplicar um 'Fix Forward' definitivo.
++
++O erro começou após alterarmos a lógica que forçava o calendário a ir para Janeiro (SELECT_CALENDAR_DAY). Alguma variável, componente auxiliar (como Card, Badge, etc) ou função ficou fora de ordem no escopo.
++
++Sua Missão Estratégica (Sem Git):
++
++Análise de Escopo Top-Down: Leia o arquivo Index.tsx. Verifique todas as declarações de useRef, useState e componentes UI auxiliares que estão declarados dentro do mesmo arquivo.
++
++A Cura pelo Hoisting: Para evitar TDZ em funções de callback e handlers, converta as declarações de const minhaFuncao = () => {} que estão causando conflito circular para funções nomeadas tradicionais function minhaFuncao() {}, pois elas sofrem hoisting automático do JavaScript.
++
++Ordem de Componentes: Se houver componentes menores (ex: Card, Modal) declarados no final do arquivo ou dentro do componente principal, mova-os para fora e para o topo do arquivo (logo após os imports).
++
++Conserto do Gatilho (Janeiro): Procure o useEffect que dispara o SELECT_CALENDAR_DAY ou a função performSelectCalendarDay automaticamente na montagem. Em vez de apagar código, adicione um return; no início desse bloco condicional para desativar a auto-navegação para Janeiro sem quebrar as variáveis ao redor.
++
++Validação: Rode npm run build. O build deve terminar sem erros. Continue ajustando a ordem das variáveis até o build passar com sucesso de primeira."
+
+# 2026-04-10 03:06:41.241425
++N
+
+# 2026-04-10 03:08:27.123405
++/ls
+
+# 2026-04-10 03:08:58.544476
++/add src/pages/Index.tsx
+
+# 2026-04-10 03:09:15.045296
++Retome a tarefa exatamente de onde paramos no histórico. Aplique as correções de TDZ e o early return no useEffect do Index.tsx conforme o plano que você já havia criado.

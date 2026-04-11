@@ -3,6 +3,15 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error(error));
 
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    // Quando a extensão é instalada pela primeira vez, abre a página de onboarding
+    chrome.tabs.create({
+      url: "https://planejamentoturbo.com/onboarding"
+    });
+  }
+});
+
 /** Relay: content.js → painel React (buffer unificado de logs). */
 const SIAP_LIVE_LOG = "SIAP_LIVE_LOG";
 
