@@ -696,6 +696,7 @@ function pageStatsHasSelectedDay(pageStats: { selectedDay?: unknown } | null | u
 const Index = () => {
   const [selectedDay, setSelectedDay] = useState("");
   const [isSiapPage, setIsSiapPage] = useState<boolean | null>(null);
+  const [portalError, setPortalError] = useState(false);
   const [classesData, setClassesData] = useState<any>(null);
   const [pageStats, setPageStats] = useState<any>(null);
   const pageStatsRef = useRef<any>(null);
@@ -1353,14 +1354,44 @@ const Index = () => {
     if (chromeApi?.storage?.local) {
       chromeApi.storage.local.get(["selectedDay", "siap_classes_data", "siap_time_saved_stats", "hasSeenOnboarding", "siap_active_tab"], (result: any) => {
         if (result.selectedDay) setSelectedDay(result.selectedDay);
-        if (result.siap_classes_data) setClassesData(result.siap_classes_data);
+        if (result.siap_classes_data) {
+          const rawData = result.siap_classes_data;
+          const cleanData = {};
+          for (const [subject, classes] of Object.entries(rawData)) {
+            const uniqueMap = new Map();
+            if (Array.isArray(classes)) {
+              classes.forEach(t => {
+                const cleanName = String(t.name).trim();
+                if (!uniqueMap.has(cleanName)) uniqueMap.set(cleanName, { ...t, name: cleanName });
+              });
+              cleanData[subject] = Array.from(uniqueMap.values());
+            } else {
+              cleanData[subject] = classes;
+            }
+          }
+          setClassesData(cleanData);
+        }
         if (result.siap_time_saved_stats) setTimeSavedStats(result.siap_time_saved_stats);
         if (result.hasSeenOnboarding !== undefined) setHasSeenOnboarding(result.hasSeenOnboarding);
         if (result.siap_active_tab) setActiveTab(result.siap_active_tab);
       });
       chromeApi.storage.onChanged.addListener((changes: any) => {
         if (changes.siap_classes_data) {
-          setClassesData(changes.siap_classes_data.newValue);
+          const rawData = changes.siap_classes_data.newValue || {};
+          const cleanData = {};
+          for (const [subject, classes] of Object.entries(rawData)) {
+            const uniqueMap = new Map();
+            if (Array.isArray(classes)) {
+              classes.forEach(t => {
+                const cleanName = String(t.name).trim();
+                if (!uniqueMap.has(cleanName)) uniqueMap.set(cleanName, { ...t, name: cleanName });
+              });
+              cleanData[subject] = Array.from(uniqueMap.values());
+            } else {
+              cleanData[subject] = classes;
+            }
+          }
+          setClassesData(cleanData);
         }
         if (changes.siap_time_saved_stats) {
           setTimeSavedStats(changes.siap_time_saved_stats.newValue);
@@ -1425,6 +1456,8 @@ const Index = () => {
             }
           }
         }
+      } else if (message.action === "PORTAL_SERVER_ERROR") {
+        setPortalError(true);
       } else if (message.action === "LOGIN_REQUIRED") {
         setIsLoginRequired(true);
       } else if (message.action === "LOGGED_IN") {
@@ -1486,16 +1519,44 @@ const Index = () => {
     const chromeApi = (window as any).chrome;
     if (!chromeApi?.tabs?.onUpdated) return;
 
+    const checkActiveTabEnvironment = () => {
+      if (!chromeApi?.tabs?.query) return;
+      chromeApi.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
+        const activeTab = tabs[0];
+        const url = activeTab?.url || "";
+        const isSiap = url.toLowerCase().includes("siap.educacao.go.gov.br");
+        setIsSiapPage(isSiap);
+        
+        // Se for SIAP e terminou de carregar, garante que stats sejam puxados (Zero Latency)
+        if (isSiap && typeof forceQueryStatsPoll === 'function') {
+           forceQueryStatsPoll();
+        }
+      });
+    };
+
     const handleTabUpdate = (_tabId: number, changeInfo: any, tab: any) => {
+      // Sincroniza estado de "Ambiente Incorreto" no carregamento
+      if (changeInfo.status === "complete") {
+        checkActiveTabEnvironment();
+      }
+
       const nextUrlRaw = changeInfo?.url ?? tab?.url;
       const nextUrl = String(nextUrlRaw || "").toLowerCase();
-      if (!nextUrl || !nextUrl.includes("login.aspx")) return;
+      if (nextUrl.includes("login.aspx")) {
+        console.warn("🚨 [Extensão] Queda de sessão detectada via URL (login.aspx).");
+        handleSiapSessionLost("sessao_expirada");
+      }
+    };
 
-      console.warn("🚨 [Extensão] Queda de sessão detectada via URL (login.aspx).");
-      handleSiapSessionLost("sessao_expirada");
+    const handleTabActivated = () => {
+      checkActiveTabEnvironment();
     };
 
     chromeApi.tabs.onUpdated.addListener(handleTabUpdate);
+    chromeApi.tabs.onActivated.addListener(handleTabActivated);
+
+    // Verificação inicial ao montar/recarregar o painel
+    checkActiveTabEnvironment();
 
     const HEARTBEAT_MS = 30_000;
     const siapSessionInterval = window.setInterval(() => {
@@ -1512,6 +1573,7 @@ const Index = () => {
 
     return () => {
       chromeApi.tabs.onUpdated.removeListener(handleTabUpdate);
+      chromeApi.tabs.onActivated.removeListener(handleTabActivated);
       window.clearInterval(siapSessionInterval);
     };
   }, [handleSiapSessionLost]);
@@ -3314,6 +3376,9 @@ const Index = () => {
     const chromeApi = (window as any).chrome;
     if (!chromeApi?.tabs?.query) return;
 
+    if (chromeApi.storage?.local) { chromeApi.storage.local.remove('siap_classes_data'); }
+    setClassesData({});
+
     void (async () => {
       const resolved = await resolveSiapSessionFromDom(chromeApi);
       if (!resolved) {
@@ -4513,10 +4578,69 @@ const Index = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {portalError && (
+          <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-slate-950/95 backdrop-blur-xl p-6 text-center animate-in fade-in duration-500">
+            <div className="w-24 h-24 bg-rose-500/20 rounded-[2rem] flex items-center justify-center mb-8 border-2 border-rose-500/30 shadow-2xl shadow-rose-500/20 rotate-3">
+              <Zap className="w-12 h-12 text-rose-500 animate-pulse" />
+            </div>
+            <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-4 leading-none">SIAP Instável (Erro 500)</h2>
+            <p className="text-slate-400 text-sm font-medium leading-relaxed max-w-xs mb-10">
+              O servidor do SIAP está fora do ar ou enfrentando uma falha crítica temporária.
+            </p>
+            <Button 
+              onClick={() => {
+                const chromeApi = (window as any).chrome;
+                chromeApi?.tabs?.query({ active: true, currentWindow: true }, (tabs: any[]) => {
+                  if (tabs[0]?.id) {
+                    chromeApi.tabs.reload(tabs[0].id);
+                  }
+                });
+                setPortalError(false);
+              }} 
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black px-12 py-7 rounded-2xl shadow-2xl shadow-indigo-500/30 uppercase tracking-widest text-xs transition-all active:scale-95 group"
+            >
+              <RotateCcw className="w-4 h-4 mr-2 group-hover:rotate-180 transition-transform duration-500" />
+              Atualizar Página do SIAP
+            </Button>
+            <div className="mt-12 flex items-center gap-3 py-4 opacity-40">
+              <div className="w-1 h-1 bg-rose-500 rounded-full animate-ping" />
+              <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Sirene de Erro Ativa - Monitoramento Crítico</span>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-center gap-1.5 py-4 opacity-50"><div className="w-1 h-1 bg-emerald-500 rounded-full" /><span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">🛡️ Proteção Ativa - Local IA Processed</span></div>
       </div>
     </div>
   );
 };
+
+/**
+ * Helper para forçar a re-leitura de dados da página no SIAP (polling).
+ * Declarada como function para garantir o hoisting e evitar erros de TDZ.
+ */
+function forceQueryStatsPoll(attempts = 4) {
+  const chromeApi = (window as any).chrome;
+  if (!chromeApi?.tabs?.query) return;
+
+  let count = 0;
+  const intervals = [800, 2000, 3500, 5000];
+
+  const run = () => {
+    chromeApi.tabs.query({ active: true, currentWindow: true }, ([tab]: any) => {
+      if (tab?.id) {
+        // Solicita que o content-script extraia e envie os dados novamente
+        safeTabsSendMessage(chromeApi.tabs, tab.id, { action: "FORCE_SCRAPE_STATS" });
+      }
+    });
+    count++;
+    if (count < attempts) {
+      setTimeout(run, intervals[count - 1]);
+    }
+  };
+
+  setTimeout(run, 300); // Primeira tentativa rápida
+}
 
 export default Index;

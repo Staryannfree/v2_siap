@@ -1,5 +1,43 @@
 /* Content Script — SIAP Frequência */
 
+// 1. SIREN: DETECÇÃO DE ERRO CRÍTICO (KILL SWITCH AGRESSIVO)
+(function siapSirenKillSwitch() {
+  const pageText = document.documentElement.innerHTML || "";
+  const titleText = (document.title || "");
+  
+  const isServerError = 
+    titleText.includes("Component Dre.Repositorio") || 
+    titleText.includes("Server Error") ||
+    titleText.includes("Exception") ||
+    pageText.includes("Server Error in '/' Application") || 
+    pageText.includes("ComponentRegistrationException");
+
+  if (isServerError) {
+    console.error("🚨 [SIAP TURBO] Erro 500 detectado via HTML/Título. Abortando execução.");
+    // Tenta avisar o painel uma última vez via função segura
+    safeSendMessage({ action: "PORTAL_SERVER_ERROR" });
+    // Para a execução do script IMEDIATAMENTE. Nada abaixo desta linha será executado.
+    throw new Error("SIAP_PORTAL_SERVER_ERROR_DETECTED");
+  }
+})();
+
+/** 
+ * Envia mensagens para a extensão de forma segura, evitando erros de "Context Invalidated" 
+ * ou "TypeError" quando o SIAP sai do ar ou a extensão é atualizada.
+ */
+function safeSendMessage(message) {
+  try {
+    if (typeof chrome !== 'undefined' && chrome && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage(message, function() {
+        // Silencia erro comum de contexto invalidado no callback
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+  } catch (e) {
+    /* ignore (ex: Extension context invalidated) */
+  }
+}
+
 /** Envia console da aba SIAP para o painel React (relay no background.js). */
 (function siapInstallContentLiveLogBridge() {
   try {
@@ -24,20 +62,14 @@
 
     function send(level, args) {
       try {
-        if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
         var text = Array.prototype.slice.call(args).map(formatArg).join(' ');
-        chrome.runtime.sendMessage(
-          {
-            type: SIAP_LIVE_LOG,
-            level: level,
-            text: text,
-            ts: Date.now(),
-            href: typeof location !== 'undefined' ? location.href : '',
-          },
-          function () {
-            void chrome.runtime.lastError;
-          }
-        );
+        safeSendMessage({
+          type: SIAP_LIVE_LOG,
+          level: level,
+          text: text,
+          ts: Date.now(),
+          href: typeof location !== 'undefined' ? location.href : '',
+        });
       } catch (e) {
         /* ignore */
       }
@@ -69,13 +101,6 @@ const STORAGE_KEY = "SIAP_TASK_QUEUE";
 const QUEUE_KEY = 'siap_click_queue';
 let isProcessing = false; 
 let totalItemsInQueue = 0;
-
-/**
- * Flag de prontidão do PageRequestManager (UpdatePanel do ASP.NET).
- * Evita que a fila de cliques dispare ANTES do Sys/PRM estar inicializado
- * na página recém-carregada via safeDoPostBack (form.submit completo).
- * Liberado por hookAjaxWatcher ao encontrar o PRM, ou pelo fallback de 5s.
- */
 let siapPrmReady = false;
 
 // Intercepta requisições AJAX do ASP.NET via polling no próprio content-script.
@@ -369,7 +394,7 @@ function processHeartbeatQueue() {
     localStorage.removeItem('siap_tree_postback_target');
     console.log("SIAP: Fila de cliques concluída com sucesso!");
     totalItemsInQueue = 0;
-    chrome.runtime.sendMessage({ action: "QUEUE_FINISHED" });
+    safeSendMessage({ action: "QUEUE_FINISHED" });
     return; 
   }
 
@@ -378,7 +403,7 @@ function processHeartbeatQueue() {
   if (!totalItemsInQueue) totalItemsInQueue = total;
 
   const processed = total - queue.length;
-  chrome.runtime.sendMessage({ 
+  safeSendMessage({ 
     action: "QUEUE_PROGRESS", 
     payload: { current: processed, total: total } 
   });
@@ -387,7 +412,7 @@ function processHeartbeatQueue() {
   const nextStr = typeof nextItem === 'string' ? nextItem : String(nextItem);
 
   // Painel React: tabela de sincronização (remaining = itens restantes na fila, incluindo o atual)
-  chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
+  safeSendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
 
   // --- Texto livre (sem postback; processa no mesmo ciclo, sem travar 2,5s) ---
   if (nextStr.startsWith('INJECT_TEXT_METODOLOGIA|||')) {
@@ -406,8 +431,8 @@ function processHeartbeatQueue() {
     }
     queue.shift();
     localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-    chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
-    chrome.runtime.sendMessage({ action: 'ITEM_PROCESSED', remaining: queue.length });
+    safeSendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
+    safeSendMessage({ action: 'ITEM_PROCESSED', remaining: queue.length });
     isProcessing = false;
     return;
   }
@@ -427,8 +452,8 @@ function processHeartbeatQueue() {
     }
     queue.shift();
     localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-    chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
-    chrome.runtime.sendMessage({ action: 'ITEM_PROCESSED', remaining: queue.length });
+    safeSendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
+    safeSendMessage({ action: 'ITEM_PROCESSED', remaining: queue.length });
     isProcessing = false;
     return;
   }
@@ -446,8 +471,8 @@ function processHeartbeatQueue() {
 
     isProcessing = true;
 
-    chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
-    chrome.runtime.sendMessage({
+    safeSendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
+    safeSendMessage({
       action: 'ITEM_PROCESSED',
       remaining: queue.length
     });
@@ -473,8 +498,8 @@ function processHeartbeatQueue() {
     console.log('[🟢 QUEUE TICK] Btn text:', btnElement.outerHTML.substring(0, 200));
     console.log('[🟢 QUEUE TICK] Restam na fila:', queue.length);
 
-    chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
-    chrome.runtime.sendMessage({
+    safeSendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
+    safeSendMessage({
       action: 'ITEM_PROCESSED',
       remaining: queue.length
     });
@@ -510,7 +535,7 @@ function processHeartbeatQueue() {
       const invalidItem = queue.shift();
       console.warn('[🟢 QUEUE TICK] Removendo item invalido da fila:', invalidItem);
       localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-      chrome.runtime.sendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
+      safeSendMessage({ action: 'QUEUE_UPDATE', remaining: queue.length });
     }
   }
 }
@@ -663,17 +688,17 @@ function waitForElement(selector, timeout = 5000) {
 async function processNextTask() {
   if (detectServerError()) {
     console.log("SIAP: Erro de servidor detectado. Fila pausada.");
-    chrome.runtime.sendMessage({ action: "SYNC_STATUS", status: "OFFLINE", error: "Erro de Servidor" });
+    safeSendMessage({ action: "SYNC_STATUS", status: "OFFLINE", error: "Erro de Servidor" });
     return;
   }
 
   const queue = await getQueue();
   if (queue.length === 0) {
-    chrome.runtime.sendMessage({ action: "SYNC_STATUS", status: "IDLE" });
+    safeSendMessage({ action: "SYNC_STATUS", status: "IDLE" });
     return;
   }
 
-  chrome.runtime.sendMessage({ action: "SYNC_STATUS", status: "SYNCING", count: queue.length });
+  safeSendMessage({ action: "SYNC_STATUS", status: "SYNCING", count: queue.length });
 
   const nextTask = queue[0];
   
@@ -1139,7 +1164,7 @@ function trySiapAvancarAposSalvarFromConteudoInit() {
       if (mesmoDia) {
         console.log('SIAP: [Avançar pós-salvar] Próximo pendente é o mesmo dia atual (' + diaAtualSiap + ') — calendário ainda não atualizou. Nenhum dia pendente (inbox zero).');
         sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
-        try { chrome.runtime.sendMessage({ action: 'INBOX_ZERO' }); } catch (e) { /* ignore */ }
+        try { safeSendMessage({ action: 'INBOX_ZERO' }); } catch (e) { /* ignore */ }
         return;
       }
 
@@ -1152,7 +1177,7 @@ function trySiapAvancarAposSalvarFromConteudoInit() {
     console.log('SIAP: [Avançar pós-salvar] Nenhum dia pendente (inbox zero).');
     sessionStorage.removeItem(SIAP_AVANCAR_APOS_SALVAR_KEY);
     try {
-      chrome.runtime.sendMessage({ action: 'INBOX_ZERO' });
+      safeSendMessage({ action: 'INBOX_ZERO' });
     } catch (e) {
       /* ignore */
     }
@@ -1425,7 +1450,7 @@ function siapAvancarParaProximaAula(dd) {
   console.log('[SIAP GEMINADA DEBUG] Avancando para proxima aula: idxAntigo=' + (dd.selectedIndex - 1) + ' → idxNovo=' + proximoIdx + ' → aula="' + nomeAula + '"');
   console.log('[DEBUG AVANCO] Notificando painel sobre mudança de aula...');
   try {
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       action: 'SIAP_AULA_AVANCADA',
       payload: { aulaIdx: proximoIdx, nomeAula },
     });
@@ -1778,7 +1803,7 @@ function siapScheduleUpdatePageStatsFromDom(options) {
       const json = JSON.stringify(stats);
       if (json === siapStatsLastSentJson) return;
       siapStatsLastSentJson = json;
-      chrome.runtime.sendMessage({ action: 'UPDATE_PAGE_STATS', stats });
+      safeSendMessage({ action: 'UPDATE_PAGE_STATS', stats });
     } catch (e) {
       console.warn('SIAP: falha ao serializar/enviar stats', e);
     }
@@ -2630,7 +2655,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     totalItemsInQueue = message.payload.length;
     
     // Feedback imediato de 0%
-    chrome.runtime.sendMessage({ 
+    safeSendMessage({ 
       action: "QUEUE_PROGRESS", 
       payload: { current: 0, total: totalItemsInQueue } 
     });
@@ -2893,7 +2918,7 @@ if (path.includes("login.aspx")) {
 } else {
   // If we are not on the login page and we are on a valid SIAP page, we are logged in.
   const reportLoggedIn = () => {
-    chrome.runtime.sendMessage({ action: "LOGGED_IN" });
+    safeSendMessage({ action: "LOGGED_IN" });
   };
   reportLoggedIn();
   syncSiapUserProfileToStorage();
